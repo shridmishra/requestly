@@ -13,16 +13,19 @@ import PATHS from "config/constants/sub/paths";
 import { trackTabReordered } from "modules/analytics/events/misc/apiClient";
 import { Typography } from "antd";
 import "./tabsContainer.scss";
+import { TabState } from "../store/tabStore";
+import { StoreApi } from "zustand";
 
 interface TabItemProps {
   tabId: number;
   index: number;
   moveTab: (fromIndex: number, toIndex: number) => void;
-  tabStore: any; // Replace with actual TabStore type from tabServiceStore
+  tabStore: StoreApi<TabState>;
   setActiveTab: (tabId: number) => void;
   closeTabById: (tabId: number, skipUnsavedPrompt?: boolean) => void;
   incrementVersion: () => void;
   resetPreviewTab: () => void;
+  activeTabId?: number;
 }
 
 const TabItemComponent: React.FC<TabItemProps> = ({
@@ -34,8 +37,9 @@ const TabItemComponent: React.FC<TabItemProps> = ({
   closeTabById,
   incrementVersion,
   resetPreviewTab,
+  activeTabId,
 }) => {
-  const tabState = tabStore.getState();
+  const tabState = tabStore.getState(); // Still use getState for now, consider useStore if reactivity is needed
   const [{ isDragging }, drag] = useDrag({
     type: "tab",
     item: { tabId, index },
@@ -56,10 +60,11 @@ const TabItemComponent: React.FC<TabItemProps> = ({
 
   return (
     <li
+      id={`tab-${tabId}`}
       ref={(node) => drag(drop(node))}
-      className={`tab-item ${tabId === tabState.id ? "ant-tabs-tab-active" : ""} ${isDragging ? "dragging" : ""}`}
+      className={`tab-item ${tabId === activeTabId ? "ant-tabs-tab-active" : ""} ${isDragging ? "dragging" : ""}`}
       role="tab"
-      aria-selected={tabId === tabState.id}
+      aria-selected={tabId === activeTabId}
       aria-controls={`tabpanel-${tabId}`}
       tabIndex={0}
       onClick={() => setActiveTab(tabId)}

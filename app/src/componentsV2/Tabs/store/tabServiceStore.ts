@@ -172,7 +172,8 @@ const createTabServiceStore = () => {
         },
         closeAllTabs(skipUnsavedPrompt) {
           const { tabs, closeTabById } = get();
-          tabs.forEach((_, tabId) => closeTabById(tabId, skipUnsavedPrompt));
+          const ids = Array.from(tabs.keys());
+          ids.forEach((id) => closeTabById(id, skipUnsavedPrompt));
         },
         cleanupCloseBlockers() {
           const { tabs } = get();
