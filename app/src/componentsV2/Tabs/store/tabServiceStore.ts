@@ -23,7 +23,6 @@ type TabServiceState = {
   previewTabSource: AbstractTabSource | null;
   tabsIndex: Map<SourceName, SourceMap>;
   tabs: Map<TabId, TabStore>;
-  tabOrder: TabId[];
   ignorePath: boolean;
   _version: number;
 };
@@ -45,6 +44,7 @@ type TabActions = {
   resetPreviewTab: () => void;
   setPreviewTab: (tabId: TabId) => void;
   setActiveTab: (tabId: TabId) => void;
+  setTabs: (newTabs: Map<TabId, TabStore>) => void;
   _generateNewTabId: () => TabId;
   incrementVersion: () => void;
   getTabIdBySource: (sourceId: SourceId, sourceName: SourceName) => TabId | undefined;
@@ -52,7 +52,6 @@ type TabActions = {
   consumeIgnorePath: () => boolean;
   setIgnorePath: (ignorePath: boolean) => void;
   cleanupCloseBlockers: () => void;
-  updateTabOrder: (newOrder: TabId[]) => void;
 };
 
 export type TabServiceStore = TabServiceState & TabActions;
@@ -65,7 +64,6 @@ const initialState: TabServiceState = {
   previewTabSource: null,
   tabsIndex: new Map(),
   tabs: new Map(),
-  tabOrder: [],
   ignorePath: false,
   _version: 0,
 };
@@ -85,15 +83,15 @@ const createTabServiceStore = () => {
           return ignorePath;
         },
         reset(ignorePath = false) {
-          set({ ...initialState, tabsIndex: new Map(), tabs: new Map(), tabOrder: [], ignorePath });
+          set({ ...initialState, tabsIndex: new Map(), tabs: new Map(), ignorePath });
           tabServiceStore.persist.clearStorage();
         },
         upsertTabSource(tabId, source, config) {
           const sourceId = source.getSourceId();
           const sourceName = source.getSourceName();
-          const { tabsIndex, tabs, setActiveTab, tabOrder } = get();
+          const { tabsIndex, tabs, setActiveTab } = get();
 
-          if (!tabId) return;
+          if (tabId == null) return;
 
           const tab = createTabStore(tabId, source, source.getDefaultTitle(), config?.preview);
           if (tabsIndex.has(sourceName)) {
@@ -103,23 +101,28 @@ const createTabServiceStore = () => {
           }
 
           tabs.set(tabId, tab);
-
-          const newTabOrder = tabOrder.includes(tabId) ? tabOrder : [...tabOrder, tabId];
-          set({ tabs: new Map(tabs), tabOrder: newTabOrder });
+          set({ tabs: new Map(tabs) });
           setActiveTab(tabId);
         },
         updateTabBySource(sourceId, sourceName, updates) {
           const { tabs, getTabIdBySource, incrementVersion } = get();
           const tabId = getTabIdBySource(sourceId, sourceName);
-          if (!tabId) return;
+          if (tabId == null) return;
 
           const tabStore = tabs.get(tabId);
           if (!tabStore) return;
 
           const tabState = tabStore.getState();
-          tabStore.getState().setTitle(updates?.title ?? tabState.title);
-          tabStore.getState().setPreview(updates?.preview ?? tabState.preview);
-          tabStore.getState().setIcon(updates?.icon ?? tabState.icon);
+          const next = {
+            title: updates?.title ?? tabState.title,
+            preview: updates?.preview ?? tabState.preview,
+            icon: updates?.icon ?? tabState.icon,
+            unsaved: updates?.unsaved ?? tabState.unsaved,
+          };
+          tabStore.getState().setTitle(next.title);
+          tabStore.getState().setPreview(next.preview);
+          tabStore.getState().setIcon(next.icon);
+          tabStore.getState().setUnsaved(next.unsaved);
           incrementVersion();
         },
         openTab(source, config) {
@@ -164,7 +167,7 @@ const createTabServiceStore = () => {
           const sourceName = source.getSourceName();
           const { closeTabById, getTabIdBySource } = get();
           const existingTabId = getTabIdBySource(sourceId, sourceName);
-          if (!existingTabId) return;
+          if (existingTabId == null) return;
           closeTabById(existingTabId, skipUnsavedPrompt);
         },
         closeAllTabs(skipUnsavedPrompt) {
@@ -179,7 +182,7 @@ const createTabServiceStore = () => {
         closeTabBySource(sourceId, sourceName, skipUnsavedPrompt) {
           const { closeTabById, getTabIdBySource } = get();
           const tabId = getTabIdBySource(sourceId, sourceName);
-          if (!tabId) return;
+          if (tabId == null) return;
           closeTabById(tabId, skipUnsavedPrompt);
         },
         closeTabByContext(contextId, skipUnsavedPrompt) {
@@ -190,7 +193,7 @@ const createTabServiceStore = () => {
           tabsToClose.forEach((t) => closeTabById(t.id, skipUnsavedPrompt));
         },
         closeTabById(tabId, skipUnsavedPrompt) {
-          const { tabs, tabsIndex, activeTabId, setActiveTab, tabOrder } = get();
+          const { tabs, tabsIndex, activeTabId, setActiveTab } = get();
           const tabStore = tabs.get(tabId);
           if (!tabStore) return;
 
@@ -215,20 +218,20 @@ const createTabServiceStore = () => {
           tabsIndex.get(sourceName)?.delete(sourceId);
           if (tabsIndex.get(sourceName)?.size === 0) tabsIndex.delete(sourceName);
 
-          const newTabOrder = tabOrder.filter((id) => id !== tabId);
-
+          const tabIds = Array.from(tabs.keys());
+          const currentIndex = tabIds.indexOf(tabId);
+          const newTabIds = tabIds.filter((id) => id !== tabId);
           const newActiveTabId =
             activeTabId !== tabId
               ? activeTabId
               : (() => {
-                  if (newTabOrder.length === 0) return undefined;
-                  const currentIndex = tabOrder.indexOf(tabId);
-                  const nextIndex = currentIndex < newTabOrder.length ? currentIndex : currentIndex - 1;
-                  return nextIndex >= 0 ? newTabOrder[nextIndex] : undefined;
+                  if (newTabIds.length === 0) return undefined;
+                  const nextIndex = currentIndex < newTabIds.length ? currentIndex : currentIndex - 1;
+                  return nextIndex >= 0 ? newTabIds[nextIndex] : undefined;
                 })();
 
           tabs.delete(tabId);
-          set({ tabs: new Map(tabs), tabOrder: newTabOrder });
+          set({ tabs: new Map(tabs) });
           setActiveTab(newActiveTabId);
         },
         resetPreviewTab() {
@@ -254,6 +257,9 @@ const createTabServiceStore = () => {
             set({ activeTabId: undefined, activeTabSource: null });
           }
         },
+        setTabs(newTabs: Map<TabId, TabStore>) {
+          set({ tabs: new Map(newTabs), _version: get()._version + 1 });
+        },
         _generateNewTabId() {
           const { tabIdSequence } = get();
           const nextId = tabIdSequence + 1;
@@ -272,9 +278,6 @@ const createTabServiceStore = () => {
           const tabId = getTabIdBySource(sourceId, sourceName);
           return tabId ? tabs.get(tabId)?.getState() : undefined;
         },
-        updateTabOrder(newOrder) {
-          set({ tabOrder: newOrder, _version: get()._version + 1 });
-        },
       }),
       {
         name: "rq_tabs_store",
@@ -283,7 +286,6 @@ const createTabServiceStore = () => {
           activeTabId: state.activeTabId,
           tabsIndex: state.tabsIndex,
           tabs: state.tabs,
-          tabOrder: state.tabOrder,
           _version: state._version,
         }),
         onRehydrateStorage: (store) => (store, error: Error) => {
@@ -306,9 +308,10 @@ const createTabServiceStore = () => {
                 sourceName,
                 Array.from(sourceMap.entries()),
               ]);
+              const tabIds = Array.from(newValue.state.tabs.keys());
               const stateString = JSON.stringify({
                 ...newValue,
-                state: { ...newValue.state, tabs, tabsIndex },
+                state: { ...newValue.state, tabs, tabsIndex, tabIds },
               });
               sessionStorage.setItem(name, stateString);
             } catch (error) {
@@ -336,21 +339,22 @@ const createTabServiceStore = () => {
               const activeTabId = existingValue.state.activeTabId;
               const activeTabSource = activeTabId ? tabs.get(activeTabId)?.getState().source : null;
 
-              const storedTabOrder = existingValue.state.tabOrder || [];
+              const storedTabIds = existingValue.state.tabIds || [];
               const validTabIds = new Set(tabs.keys());
-
-              const validTabOrder = storedTabOrder.filter((id: TabId) => validTabIds.has(id));
+              const validTabOrder = storedTabIds.filter((id: TabId) => validTabIds.has(id));
               const missingTabs = Array.from(validTabIds).filter((id) => !validTabOrder.includes(id));
-              const finalTabOrder = [...validTabOrder, ...missingTabs];
+              const finalTabs = new Map();
+              [...validTabOrder, ...missingTabs].forEach((id) => {
+                if (tabs.has(id)) finalTabs.set(id, tabs.get(id));
+              });
 
               return {
                 ...existingValue,
                 state: {
                   ...existingValue.state,
-                  tabs,
+                  tabs: finalTabs,
                   tabsIndex,
                   activeTabSource,
-                  tabOrder: finalTabOrder,
                 },
               };
             } catch (error) {

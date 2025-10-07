@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef } from "react";
-import { DragDropContext, Droppable, Draggable } from "react-beautiful-dnd";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { DndProvider, useDrag, useDrop } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
 import { useTabServiceWithSelector } from "../store/tabServiceStore";
 import { TabItem } from "./TabItem";
 import { useMatchedTabSource } from "../hooks/useMatchedTabSource";
@@ -13,6 +14,101 @@ import { trackTabReordered } from "modules/analytics/events/misc/apiClient";
 import { Typography } from "antd";
 import "./tabsContainer.scss";
 
+interface TabItemProps {
+  tabId: number;
+  index: number;
+  moveTab: (fromIndex: number, toIndex: number) => void;
+  tabStore: any; // Replace with actual TabStore type from tabServiceStore
+  setActiveTab: (tabId: number) => void;
+  closeTabById: (tabId: number, skipUnsavedPrompt?: boolean) => void;
+  incrementVersion: () => void;
+  resetPreviewTab: () => void;
+}
+
+const TabItemComponent: React.FC<TabItemProps> = ({
+  tabId,
+  index,
+  moveTab,
+  tabStore,
+  setActiveTab,
+  closeTabById,
+  incrementVersion,
+  resetPreviewTab,
+}) => {
+  const tabState = tabStore.getState();
+  const [{ isDragging }, drag] = useDrag({
+    type: "tab",
+    item: { tabId, index },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging(),
+    }),
+  });
+
+  const [, drop] = useDrop({
+    accept: "tab",
+    hover: (item: { tabId: number; index: number }) => {
+      if (item.index !== index) {
+        moveTab(item.index, index);
+        item.index = index;
+      }
+    },
+  });
+
+  return (
+    <li
+      ref={(node) => drag(drop(node))}
+      className={`tab-item ${tabId === tabState.id ? "ant-tabs-tab-active" : ""} ${isDragging ? "dragging" : ""}`}
+      role="tab"
+      aria-selected={tabId === tabState.id}
+      aria-controls={`tabpanel-${tabId}`}
+      tabIndex={0}
+      onClick={() => setActiveTab(tabId)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setActiveTab(tabId);
+        }
+      }}
+    >
+      <div
+        className="tab-title-container"
+        onDoubleClick={() => {
+          if (tabState.preview) {
+            tabState.setPreview(false);
+            incrementVersion();
+            resetPreviewTab();
+          }
+        }}
+      >
+        <div className="tab-title">
+          {tabState.icon && <div className="icon">{tabState.icon}</div>}
+          <Typography.Text
+            ellipsis={{
+              tooltip: { title: tabState.title, placement: "bottom", color: "#000", mouseEnterDelay: 0.5 },
+            }}
+            className="title"
+          >
+            {tabState.preview ? <i>{tabState.title}</i> : tabState.title}
+          </Typography.Text>
+        </div>
+        <div className="tab-actions">
+          <RQButton
+            size="small"
+            type="transparent"
+            className="tab-close-button"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeTabById(tabState.id);
+            }}
+            icon={<MdClose />}
+          />
+          {tabState.unsaved ? <div className="unsaved-changes-indicator" /> : null}
+        </div>
+      </div>
+    </li>
+  );
+};
+
 export const TabsContainer: React.FC = () => {
   const [
     activeTabId,
@@ -25,9 +121,8 @@ export const TabsContainer: React.FC = () => {
     resetPreviewTab,
     consumeIgnorePath,
     cleanupCloseBlockers,
-    tabOrder,
-    updateTabOrder,
     getTabIdBySource,
+    setTabs,
   ] = useTabServiceWithSelector((state) => [
     state.activeTabId,
     state.activeTabSource,
@@ -39,9 +134,8 @@ export const TabsContainer: React.FC = () => {
     state.resetPreviewTab,
     state.consumeIgnorePath,
     state.cleanupCloseBlockers,
-    state.tabOrder,
-    state.updateTabOrder,
     state.getTabIdBySource,
+    state.setTabs,
   ]);
 
   const { setUrl } = useSetUrl();
@@ -103,110 +197,66 @@ export const TabsContainer: React.FC = () => {
     }
   }, [activeTabSource, setUrl]);
 
-  const onDragEnd = (result: any) => {
-    if (!result.destination) return;
-    const newOrder = Array.from(tabOrder);
-    const [moved] = newOrder.splice(result.source.index, 1);
-    newOrder.splice(result.destination.index, 0, moved);
-    updateTabOrder(newOrder);
-    sessionStorage.setItem("rq-api-client-tab-order", JSON.stringify(newOrder));
-    trackTabReordered(newOrder);
-  };
+  const moveTab = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      const tabIds = Array.from(tabs.keys());
+      const [moved] = tabIds.splice(fromIndex, 1);
+      tabIds.splice(toIndex, 0, moved);
+
+      const newTabs = new Map();
+      tabIds.forEach((id) => newTabs.set(id, tabs.get(id)));
+
+      setTabs(newTabs);
+      sessionStorage.setItem("rq-api-client-tabs-order", JSON.stringify(tabIds));
+      trackTabReordered(tabIds);
+    },
+    [tabs, setTabs]
+  );
 
   const tabItems = useMemo(() => {
-    return tabOrder
-      .map((tabId) => {
-        const tabStore = tabs.get(tabId);
-        if (!tabStore) return null;
-        const tabState = tabStore.getState();
-        return {
-          key: tabState.id.toString(),
-          tabId,
-          label: (
-            <div
-              className="tab-title-container"
-              onDoubleClick={() => {
-                if (tabState.preview) {
-                  tabState.setPreview(false);
-                  incrementVersion();
-                  resetPreviewTab();
-                }
-              }}
-            >
-              <div className="tab-title">
-                {tabState.icon && <div className="icon">{tabState.icon}</div>}
-                <Typography.Text
-                  ellipsis={{
-                    tooltip: { title: tabState.title, placement: "bottom", color: "#000", mouseEnterDelay: 0.5 },
-                  }}
-                  className="title"
-                >
-                  {tabState.preview ? <i>{tabState.title}</i> : tabState.title}
-                </Typography.Text>
-              </div>
-              <div className="tab-actions">
-                <RQButton
-                  size="small"
-                  type="transparent"
-                  className="tab-close-button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeTabById(tabState.id);
-                  }}
-                  icon={<MdClose />}
-                />
-                {tabState.unsaved ? <div className="unsaved-changes-indicator" /> : null}
-              </div>
-            </div>
-          ),
-          children: <TabItem store={tabStore}>{tabState.source.render()}</TabItem>,
-        };
-      })
-      .filter(Boolean);
-  }, [tabs, tabOrder, closeTabById, incrementVersion, resetPreviewTab]);
+    return Array.from(tabs.entries()).map(([tabId, tabStore], index) => {
+      const tabState = tabStore.getState();
+      return {
+        key: tabState.id.toString(),
+        tabId,
+        label: (
+          <TabItemComponent
+            tabId={tabId}
+            index={index}
+            moveTab={moveTab}
+            tabStore={tabStore}
+            setActiveTab={setActiveTab}
+            closeTabById={closeTabById}
+            incrementVersion={incrementVersion}
+            resetPreviewTab={resetPreviewTab}
+          />
+        ),
+        children: <TabItem store={tabStore}>{tabState.source.render()}</TabItem>,
+      };
+    });
+  }, [tabs, moveTab, setActiveTab, closeTabById, incrementVersion, resetPreviewTab]);
 
-  return tabOrder.length === 0 ? (
+  return tabs.size === 0 ? (
     <div className="tabs-outlet-container">
       <Outlet />
     </div>
   ) : (
     <div className="tabs-container">
-      <DragDropContext onDragEnd={onDragEnd}>
-        <Droppable droppableId="api-client-tabs" direction="horizontal">
-          {(provided) => (
-            <ul className="tabs-content" {...provided.droppableProps} ref={provided.innerRef} role="tablist">
-              {tabItems.map((item, index) => (
-                <Draggable key={item.tabId} draggableId={item.tabId.toString()} index={index}>
-                  {(provided, snapshot) => (
-                    <li
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                      className={`tab-item ${item.key === activeTabId?.toString() ? "ant-tabs-tab-active" : ""} ${
-                        snapshot.isDragging ? "dragging" : ""
-                      }`}
-                      role="tab"
-                      aria-selected={item.key === activeTabId?.toString()}
-                      onClick={() => setActiveTab(parseInt(item.key))}
-                    >
-                      {item.label}
-                    </li>
-                  )}
-                </Draggable>
-              ))}
-              {provided.placeholder}
-              <li className="ant-tabs-nav-add">
-                <RQButton
-                  type="transparent"
-                  onClick={() => openTab(new DraftRequestContainerTabSource())}
-                  icon={<span>+</span>}
-                />
-              </li>
-            </ul>
-          )}
-        </Droppable>
-      </DragDropContext>
-      <div className="tabs-outlet-container">
+      <DndProvider backend={HTML5Backend}>
+        <ul className="tabs-content" role="tablist">
+          {tabItems.map((item) => (
+            <React.Fragment key={item.tabId}>{item.label}</React.Fragment>
+          ))}
+          <li className="ant-tabs-nav-add">
+            <RQButton
+              type="transparent"
+              onClick={() => openTab(new DraftRequestContainerTabSource())}
+              icon={<span>+</span>}
+            />
+          </li>
+        </ul>
+      </DndProvider>
+      <div className="tabs-outlet-container" id={`tabpanel-${activeTabId}`} role="tabpanel">
         {tabItems.find((item) => item.key === activeTabId?.toString())?.children || <Outlet />}
       </div>
     </div>
