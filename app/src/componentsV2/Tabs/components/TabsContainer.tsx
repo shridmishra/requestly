@@ -39,7 +39,7 @@ const TabItemComponent: React.FC<TabItemProps> = ({
   resetPreviewTab,
   activeTabId,
 }) => {
-  const tabState = tabStore.getState(); // Still use getState for now, consider useStore if reactivity is needed
+  const tabState = tabStore.getState();
   const [{ isDragging }, drag] = useDrag({
     type: "tab",
     item: { tabId, index },
@@ -62,7 +62,9 @@ const TabItemComponent: React.FC<TabItemProps> = ({
     <li
       id={`tab-${tabId}`}
       ref={(node) => drag(drop(node))}
-      className={`tab-item ${tabId === activeTabId ? "ant-tabs-tab-active" : ""} ${isDragging ? "dragging" : ""}`}
+      className={`ant-tabs-tab tab-item ${tabId === activeTabId ? "ant-tabs-tab-active" : ""} ${
+        isDragging ? "dragging" : ""
+      }`}
       role="tab"
       aria-selected={tabId === activeTabId}
       aria-controls={`tabpanel-${tabId}`}
@@ -82,10 +84,11 @@ const TabItemComponent: React.FC<TabItemProps> = ({
             tabState.setPreview(false);
             incrementVersion();
             resetPreviewTab();
+            setActiveTab(tabId);
           }
         }}
       >
-        <div className="tab-title">
+        <div className="tab-title ant-tabs-tab-btn">
           {tabState.icon && <div className="icon">{tabState.icon}</div>}
           <Typography.Text
             ellipsis={{
@@ -97,16 +100,18 @@ const TabItemComponent: React.FC<TabItemProps> = ({
           </Typography.Text>
         </div>
         <div className="tab-actions">
-          <RQButton
-            size="small"
-            type="transparent"
-            className="tab-close-button"
-            onClick={(e) => {
-              e.stopPropagation();
-              closeTabById(tabState.id);
-            }}
-            icon={<MdClose />}
-          />
+          {tabState.closable && (
+            <RQButton
+              size="small"
+              type="transparent"
+              className="tab-close-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeTabById(tabState.id);
+              }}
+              icon={<MdClose />}
+            />
+          )}
           {tabState.unsaved ? <div className="unsaved-changes-indicator" /> : null}
         </div>
       </div>
@@ -120,6 +125,7 @@ export const TabsContainer: React.FC = () => {
     activeTabSource,
     setActiveTab,
     tabs,
+    _version,
     openTab,
     closeTabById,
     incrementVersion,
@@ -133,6 +139,7 @@ export const TabsContainer: React.FC = () => {
     state.activeTabSource,
     state.setActiveTab,
     state.tabs,
+    state._version,
     state.openTab,
     state.closeTabById,
     state.incrementVersion,
@@ -234,12 +241,14 @@ export const TabsContainer: React.FC = () => {
             closeTabById={closeTabById}
             incrementVersion={incrementVersion}
             resetPreviewTab={resetPreviewTab}
+            activeTabId={activeTabId}
           />
         ),
         children: <TabItem store={tabStore}>{tabState.source.render()}</TabItem>,
       };
     });
-  }, [tabs, moveTab, setActiveTab, closeTabById, incrementVersion, resetPreviewTab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs, moveTab, setActiveTab, closeTabById, incrementVersion, resetPreviewTab, activeTabId, _version]);
 
   return tabs.size === 0 ? (
     <div className="tabs-outlet-container">
@@ -248,13 +257,15 @@ export const TabsContainer: React.FC = () => {
   ) : (
     <div className="tabs-container">
       <DndProvider backend={HTML5Backend}>
-        <ul className="tabs-content" role="tablist">
+        <ul className="ant-tabs tabs-content" role="tablist">
           {tabItems.map((item) => (
             <React.Fragment key={item.tabId}>{item.label}</React.Fragment>
           ))}
           <li className="ant-tabs-nav-add">
             <RQButton
               type="transparent"
+              size="small"
+              className="add-tab-button"
               onClick={() => openTab(new DraftRequestContainerTabSource())}
               icon={<span>+</span>}
             />

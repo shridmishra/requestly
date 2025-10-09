@@ -21,7 +21,7 @@ type TabServiceState = {
   activeTabSource: AbstractTabSource | null;
   previewTabId: TabId | undefined;
   previewTabSource: AbstractTabSource | null;
-  tabsIndex: Map<SourceName, SourceMap>;
+  tabsIndex: Map<SourceName, SourceMap>; // Type: SourceName -> sourceId -> tabId eg: Request -> [requestId,tabId]
   tabs: Map<TabId, TabStore>;
   ignorePath: boolean;
   _version: number;
@@ -237,11 +237,13 @@ const createTabServiceStore = () => {
         },
         resetPreviewTab() {
           set({ previewTabId: undefined, previewTabSource: null });
+          set({ _version: get()._version + 1 });
         },
         setPreviewTab(id: TabId) {
           const { tabs, resetPreviewTab } = get();
           if (tabs.has(id)) {
             set({ previewTabId: id, previewTabSource: tabs.get(id).getState().source });
+            set({ _version: get()._version + 1 });
           } else {
             resetPreviewTab();
           }
@@ -334,7 +336,9 @@ const createTabServiceStore = () => {
               const tabs: TabServiceStore["tabs"] = new Map(
                 existingValue.state.tabs.map(([tabId, tabState]: [TabId, TabState]) => {
                   const source = new TAB_SOURCES_MAP[tabState.source.type](tabState.source.metadata);
-                  return [tabId, createTabStore(tabId, source, tabState.title)];
+                  const tabStore = createTabStore(tabId, source, tabState.title, tabState.preview);
+                  tabStore.getState().setClosable(tabState.closable ?? true);
+                  return [tabId, tabStore];
                 })
               );
               const activeTabId = existingValue.state.activeTabId;
